@@ -40,6 +40,34 @@ interface HttpResponseEvent {
   body: string;
 }
 
+/**
+ * Duck-type check for WERR_REVIEW_ACTIONS-shaped errors. We don't use
+ * `error?.constructor.name === 'WERR_REVIEW_ACTIONS'` because Vite's
+ * default production build (esbuild minification) renames class names
+ * — `constructor.name` then returns mangled identifiers like `'a'`,
+ * the check fails, and the error falls through to the generic
+ * `{message: ...}` wrapper which strips `code`, `tx`, `txid`,
+ * `reviewActionResults`, and `noSendChange`. The calling app then
+ * can't recover the signed transaction or surface review reasons,
+ * making `acceptDelayedBroadcast: false` flows un-debuggable.
+ *
+ * `instanceof WERR_REVIEW_ACTIONS` doesn't work either because the
+ * error is thrown by `@bsv/wallet-toolbox`'s WERR_REVIEW_ACTIONS class
+ * (a different class identity from `@bsv/sdk`'s class imported here).
+ *
+ * The duck-type check matches on the canonical message + presence of
+ * the `reviewActionResults` array, which is unique to this error type
+ * across both wallet-toolbox and SDK class hierarchies.
+ */
+function isWerrReviewActions(error: unknown): error is { reviewActionResults: unknown[] } {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as { message?: unknown; reviewActionResults?: unknown };
+  return (
+    e.message === 'Undelayed createAction or signAction results require review.' &&
+    Array.isArray(e.reviewActionResults)
+  );
+}
+
 // Parse the origin header and turn it into a fqdn (e.g. projectbabbage.com:8080)
 // Handles both origin and legacy originator headers
 function parseOrigin(headers: Record<string, string>): string | null {
@@ -135,13 +163,14 @@ export const onWalletReady = async (wallet: WalletInterface): Promise<(() => voi
               body: JSON.stringify(result),
             };
           } catch (error) {
-            if (typeof error === 'object' && error?.constructor.name === 'WERR_REVIEW_ACTIONS') {
+            if (isWerrReviewActions(error)) {
+              const errAny = error as any;
               const e = new WERR_REVIEW_ACTIONS(
-                (error as any)['reviewActionResults'],
-                (error as any)['sendWithResults'],
-                (error as any)['txid'],
-                (error as any)['tx'],
-                (error as any)['noSendChange'],
+                errAny['reviewActionResults'],
+                errAny['sendWithResults'],
+                errAny['txid'],
+                errAny['tx'],
+                errAny['noSendChange'],
               );
               console.error('createAction WERR_REVIEW_ACTIONS:', e);
               response = {
@@ -174,12 +203,13 @@ export const onWalletReady = async (wallet: WalletInterface): Promise<(() => voi
               body: JSON.stringify(result),
             };
           } catch (error) {
-            if (typeof error === 'object' && error?.constructor.name === 'WERR_REVIEW_ACTIONS') {
+            if (isWerrReviewActions(error)) {
+              const errAny = error as any;
               const e = new WERR_REVIEW_ACTIONS(
-                (error as any)['reviewActionResults'],
-                (error as any)['sendWithResults'],
-                (error as any)['txid'],
-                (error as any)['tx'],
+                errAny['reviewActionResults'],
+                errAny['sendWithResults'],
+                errAny['txid'],
+                errAny['tx'],
               );
               console.error('signAction WERR_REVIEW_ACTIONS:', e);
               response = {
@@ -258,12 +288,13 @@ export const onWalletReady = async (wallet: WalletInterface): Promise<(() => voi
               body: JSON.stringify(result),
             };
           } catch (error) {
-            if (typeof error === 'object' && error?.constructor.name === 'WERR_REVIEW_ACTIONS') {
+            if (isWerrReviewActions(error)) {
+              const errAny = error as any;
               const e = new WERR_REVIEW_ACTIONS(
-                (error as any)['reviewActionResults'],
-                (error as any)['sendWithResults'],
-                (error as any)['txid'],
-                (error as any)['tx'],
+                errAny['reviewActionResults'],
+                errAny['sendWithResults'],
+                errAny['txid'],
+                errAny['tx'],
               );
               console.error('internalizeAction WERR_REVIEW_ACTIONS:', e);
               response = {
