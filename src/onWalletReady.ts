@@ -23,7 +23,12 @@ import {
   DiscoverByIdentityKeyArgs,
   DiscoverByAttributesArgs,
   GetHeaderArgs,
-  WERR_REVIEW_ACTIONS
+  WERR_REVIEW_ACTIONS,
+  type AtomicBEEF,
+  type OutpointString,
+  type ReviewActionResult,
+  type SendWithResult,
+  type TXIDHexString
 } from '@bsv/sdk';
 
 interface HttpRequestEvent {
@@ -38,6 +43,65 @@ interface HttpResponseEvent {
   request_id: number;
   status: number;
   body: string;
+}
+
+/**
+ * Duck-type check for WERR_REVIEW_ACTIONS-shaped errors. We don't use
+ * `error?.constructor.name === 'WERR_REVIEW_ACTIONS'` because Vite's
+ * default production build (esbuild minification) renames class names
+ * — `constructor.name` then returns mangled identifiers like `'a'`,
+ * the check fails, and the error falls through to the generic
+ * `{message: ...}` wrapper which strips `code`, `tx`, `txid`,
+ * `reviewActionResults`, and `noSendChange`. The calling app then
+ * can't recover the signed transaction or surface review reasons,
+ * making `acceptDelayedBroadcast: false` flows un-debuggable.
+ *
+ * `instanceof WERR_REVIEW_ACTIONS` doesn't work either because the
+ * error is thrown by `@bsv/wallet-toolbox`'s WERR_REVIEW_ACTIONS class
+ * (a different class identity from `@bsv/sdk`'s class imported here).
+ *
+ * The duck-type check matches on the stable WERR identifier plus the
+ * structured result arrays needed by the SDK WERR_REVIEW_ACTIONS
+ * constructor.
+ */
+interface WerrReviewActionsLike {
+  reviewActionResults: ReviewActionResult[];
+  sendWithResults: SendWithResult[];
+  txid?: TXIDHexString;
+  tx?: AtomicBEEF;
+  noSendChange?: OutpointString[];
+}
+
+function isWerrReviewActions(error: unknown): error is WerrReviewActionsLike {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as {
+    name?: unknown;
+    code?: unknown;
+    reviewActionResults?: unknown;
+    sendWithResults?: unknown;
+    txid?: unknown;
+    tx?: unknown;
+    noSendChange?: unknown;
+  };
+
+  return (
+    (e.name === 'WERR_REVIEW_ACTIONS' || e.code === 5) &&
+    Array.isArray(e.reviewActionResults) &&
+    Array.isArray(e.sendWithResults) &&
+    (e.txid === undefined || typeof e.txid === 'string') &&
+    (e.tx === undefined || Array.isArray(e.tx) || e.tx instanceof Uint8Array) &&
+    (e.noSendChange === undefined || Array.isArray(e.noSendChange))
+  );
+}
+
+function toSdkWerrReviewActions(error: WerrReviewActionsLike): WERR_REVIEW_ACTIONS {
+  return new WERR_REVIEW_ACTIONS(
+    error.reviewActionResults,
+    error.sendWithResults,
+    error.txid,
+    error.tx,
+    error.noSendChange,
+  );
 }
 
 // Parse the origin header and turn it into a fqdn (e.g. projectbabbage.com:8080)
@@ -135,14 +199,8 @@ export const onWalletReady = async (wallet: WalletInterface): Promise<(() => voi
               body: JSON.stringify(result),
             };
           } catch (error) {
-            if (typeof error === 'object' && error?.constructor.name === 'WERR_REVIEW_ACTIONS') {
-              const e = new WERR_REVIEW_ACTIONS(
-                (error as any)['reviewActionResults'],
-                (error as any)['sendWithResults'],
-                (error as any)['txid'],
-                (error as any)['tx'],
-                (error as any)['noSendChange'],
-              );
+            if (isWerrReviewActions(error)) {
+              const e = toSdkWerrReviewActions(error);
               console.error('createAction WERR_REVIEW_ACTIONS:', e);
               response = {
                 request_id: req.request_id,
@@ -174,13 +232,8 @@ export const onWalletReady = async (wallet: WalletInterface): Promise<(() => voi
               body: JSON.stringify(result),
             };
           } catch (error) {
-            if (typeof error === 'object' && error?.constructor.name === 'WERR_REVIEW_ACTIONS') {
-              const e = new WERR_REVIEW_ACTIONS(
-                (error as any)['reviewActionResults'],
-                (error as any)['sendWithResults'],
-                (error as any)['txid'],
-                (error as any)['tx'],
-              );
+            if (isWerrReviewActions(error)) {
+              const e = toSdkWerrReviewActions(error);
               console.error('signAction WERR_REVIEW_ACTIONS:', e);
               response = {
                 request_id: req.request_id,
@@ -258,13 +311,8 @@ export const onWalletReady = async (wallet: WalletInterface): Promise<(() => voi
               body: JSON.stringify(result),
             };
           } catch (error) {
-            if (typeof error === 'object' && error?.constructor.name === 'WERR_REVIEW_ACTIONS') {
-              const e = new WERR_REVIEW_ACTIONS(
-                (error as any)['reviewActionResults'],
-                (error as any)['sendWithResults'],
-                (error as any)['txid'],
-                (error as any)['tx'],
-              );
+            if (isWerrReviewActions(error)) {
+              const e = toSdkWerrReviewActions(error);
               console.error('internalizeAction WERR_REVIEW_ACTIONS:', e);
               response = {
                 request_id: req.request_id,
