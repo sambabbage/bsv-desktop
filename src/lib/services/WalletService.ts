@@ -503,7 +503,7 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
         ...this._managers,
         permissionsManager,
         settingsManager: (wallet as any).settingsManager,
-        wallet,
+        wallet: permissionsManager,
         storageManager,
       }
 
