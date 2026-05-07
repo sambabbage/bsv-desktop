@@ -276,6 +276,89 @@ describe('onWalletReady', () => {
     )
   })
 
+  it('preserves WERR_REVIEW_ACTIONS fields when the class name is minified', async () => {
+    const reviewActionResults = [{ txid: '00'.repeat(32), status: 'serviceError' }]
+    const sendWithResults = [{ txid: '00'.repeat(32), status: 'failed' }]
+    const noSendChange = [`${'00'.repeat(32)}.0`]
+    const wallet = makeMockWallet({
+      createAction: vi.fn().mockRejectedValue({
+        name: 'a',
+        code: 5,
+        message: 'Review is required before returning this result.',
+        reviewActionResults,
+        sendWithResults,
+        txid: '00'.repeat(32),
+        tx: [1, 2, 3],
+        noSendChange,
+      }),
+    })
+
+    await onWalletReady(wallet)
+    const handler = mockOnHttpRequest.mock.calls[0][0]
+
+    await handler({
+      request_id: 6,
+      path: '/createAction',
+      headers: { origin: 'https://example.com' },
+      body: '{}',
+      method: 'POST',
+    })
+
+    const response = mockSendHttpResponse.mock.calls[0][0]
+    expect(response).toEqual(
+      expect.objectContaining({
+        request_id: 6,
+        status: 400,
+      })
+    )
+    expect(JSON.parse(response.body)).toEqual(
+      expect.objectContaining({
+        code: 5,
+        isError: true,
+        reviewActionResults,
+        sendWithResults,
+        txid: '00'.repeat(32),
+        tx: [1, 2, 3],
+        noSendChange,
+      })
+    )
+  })
+
+  it('detects WERR_REVIEW_ACTIONS by stable name without matching message text', async () => {
+    const reviewActionResults = [{ txid: '11'.repeat(32), status: 'invalidTx' }]
+    const sendWithResults = []
+    const wallet = makeMockWallet({
+      signAction: vi.fn().mockRejectedValue({
+        name: 'WERR_REVIEW_ACTIONS',
+        message: 'Upstream wording changed.',
+        reviewActionResults,
+        sendWithResults,
+      }),
+    })
+
+    await onWalletReady(wallet)
+    const handler = mockOnHttpRequest.mock.calls[0][0]
+
+    await handler({
+      request_id: 7,
+      path: '/signAction',
+      headers: { origin: 'https://example.com' },
+      body: '{}',
+      method: 'POST',
+    })
+
+    const response = mockSendHttpResponse.mock.calls[0][0]
+    expect(response.status).toBe(400)
+    expect(JSON.parse(response.body)).toEqual(
+      expect.objectContaining({
+        code: 5,
+        isError: true,
+        reviewActionResults,
+        sendWithResults,
+      })
+    )
+  })
+
   it('survives 10 rapid wallet swaps without losing listener', async () => {
     const wallets = Array.from({ length: 10 }, (_, i) =>
       makeMockWallet({ getVersion: vi.fn().mockResolvedValue({ version: `${i}` }) })
