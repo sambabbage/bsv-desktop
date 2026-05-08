@@ -752,9 +752,11 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
    * - Underneath this calls `WalletStorageManager.setActive`, which syncs pending writes
    *   to the target backup before atomically flipping the active pointer. The wallet
    *   object is not rebuilt; subsequent reads/writes route through the new active store.
-   * - The old primary is demoted to a backup, and the snapshot fields
-   *   (`useRemoteStorage`, `storageUrl`, `backupStorageUrls`) are updated together so
-   *   the swap survives a reload.
+   * - The snapshot fields (`useRemoteStorage`, `storageUrl`, `backupStorageUrls`) are
+   *   re-derived from `storageManager.getStores()` after the operation. The manager is
+   *   the authoritative source of truth, so the snapshot always matches its actual
+   *   active store. This also self-heals any prior divergence (e.g., a swap that
+   *   flipped the manager but failed to persist to the snapshot).
    */
   async setPrimaryStorage(target: string, progressCallback?: (message: string) => void): Promise<void> {
     const { storageManager } = this._managers
@@ -775,37 +777,59 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
     if (!targetStore) {
       throw new Error(`No storage provider matching ${normalizedTarget}. Add it as a backup first.`)
     }
-    if (targetStore.isActive) {
-      toast.info('Already the primary storage')
-      return
+
+    // Snapshot the *visible* primary before any change, so we can decide which toast to
+    // show after reconciliation.
+    const visiblePrimaryBefore = this._useRemoteStorage ? this._selectedStorageUrl : 'LOCAL_STORAGE'
+    const targetWasAlreadyActive = targetStore.isActive
+
+    if (!targetWasAlreadyActive) {
+      await storageManager.setActive(targetStore.storageIdentityKey, (s: string) => {
+        console.log('[WalletService setPrimaryStorage]', s)
+        progressCallback?.(s)
+        return s
+      })
     }
 
-    // Capture the current primary so we can demote it to a backup after the swap.
-    const oldPrimary = this._useRemoteStorage ? this._selectedStorageUrl : 'LOCAL_STORAGE'
+    // Reconcile the snapshot from the manager's authoritative store list. Always run
+    // this — even on the no-op path — because the snapshot may have drifted out of
+    // sync from a prior operation (e.g., a swap that completed in the manager but
+    // didn't persist to localStorage). Re-deriving `useRemoteStorage` / `storageUrl` /
+    // `backupStorageUrls` from `getStores()` heals any divergence.
+    const reconciledStores = storageManager.getStores() || []
+    const activeStore = reconciledStores.find(s => s.isActive)
+    if (!activeStore) throw new Error('No active storage after setPrimaryStorage')
 
-    await storageManager.setActive(targetStore.storageIdentityKey, (s: string) => {
-      console.log('[WalletService setPrimaryStorage]', s)
-      progressCallback?.(s)
-      return s
-    })
-
-    if (isLocal) {
+    if (activeStore.endpointURL) {
+      this._useRemoteStorage = true
+      this._selectedStorageUrl = activeStore.endpointURL
+    } else {
       this._useRemoteStorage = false
       this._selectedStorageUrl = ''
-    } else {
-      this._useRemoteStorage = true
-      this._selectedStorageUrl = normalizedTarget
     }
-    // The new primary is no longer a backup; the old primary becomes one.
-    this._backupStorageUrls = this._backupStorageUrls.filter(u => u !== normalizedTarget)
-    if (oldPrimary && !this._backupStorageUrls.includes(oldPrimary)) {
-      this._backupStorageUrls = [oldPrimary, ...this._backupStorageUrls]
+    const newBackups: string[] = []
+    let localSeenAsBackup = false
+    for (const s of reconciledStores) {
+      if (s.isActive) continue
+      if (s.endpointURL) {
+        if (!newBackups.includes(s.endpointURL)) newBackups.push(s.endpointURL)
+      } else if (!localSeenAsBackup) {
+        newBackups.push('LOCAL_STORAGE')
+        localSeenAsBackup = true
+      }
     }
+    this._backupStorageUrls = newBackups
 
     const snapshot = this.saveEnhancedSnapshot()
     localStorage.snap = snapshot
     this._emitState()
-    toast.success('Primary storage switched!')
+
+    const visiblePrimaryAfter = this._useRemoteStorage ? this._selectedStorageUrl : 'LOCAL_STORAGE'
+    if (targetWasAlreadyActive && visiblePrimaryBefore === visiblePrimaryAfter) {
+      toast.info('Already the primary storage')
+    } else {
+      toast.success('Primary storage switched!')
+    }
   }
 
   async updateMessageBoxUrl(url: string): Promise<void> {
