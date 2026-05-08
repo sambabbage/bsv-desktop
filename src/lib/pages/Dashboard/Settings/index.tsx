@@ -204,22 +204,24 @@ const Settings = () => {
   }
 
   const handleMakePrimary = async (target: string) => {
+    setSyncError('');
+    setSyncProgressLogs([]);
+    setSyncComplete(false);
+    setShowSyncProgress(true);
+    setBackupLoading(true);
+    const progressCallback = (message: string) => {
+      for (const line of message.split('\n')) {
+        if (line.trim()) setSyncProgressLogs((prev) => [...prev, line]);
+      }
+    };
     try {
-      setBackupLoading(true);
-      setSyncError('');
-      setSyncProgressLogs([]);
-      setSyncComplete(false);
-      setShowSyncProgress(true);
-      const progressCallback = (message: string) => {
-        for (const line of message.split('\n')) {
-          if (line.trim()) setSyncProgressLogs((prev) => [...prev, line]);
-        }
-      };
       await setPrimaryStorage(target, progressCallback);
-      setSyncComplete(true);
     } catch (e: any) {
+      console.error('[Settings] setPrimaryStorage failed:', e);
       setSyncError(e?.message || 'Failed to switch primary storage');
     } finally {
+      // Mark complete regardless of outcome so the dialog button flips from Cancel to Close.
+      setSyncComplete(true);
       setBackupLoading(false);
     }
   }
