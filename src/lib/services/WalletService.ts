@@ -718,16 +718,35 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
   }
 
   async removeBackupStorageUrl(url: string): Promise<void> {
+    if (!this._backupStorageUrls.includes(url)) return
+
     const newBackupUrls = this._backupStorageUrls.filter(u => u !== url)
+
+    // Persist before reload so the rebuilt wallet sees the updated snapshot.
+    // If the snapshot fails to save we abort — leaving the live storageManager
+    // attached to a backup the user thinks is gone is worse than a visible error.
+    let snapshot: string
     try {
-      const snapshot = this.saveEnhancedSnapshot({ backupStorageUrls: newBackupUrls })
-      localStorage.snap = snapshot
-    } catch (err) {
+      snapshot = this.saveEnhancedSnapshot({ backupStorageUrls: newBackupUrls })
+    } catch (err: any) {
       console.error('[WalletService] Failed to save snapshot:', err)
+      toast.error('Failed to remove backup: could not save snapshot')
+      throw err
     }
+    localStorage.snap = snapshot
     this._backupStorageUrls = newBackupUrls
     this._emitState()
-    toast.success('Backup storage removed. It will be disconnected on next restart.')
+
+    // wallet-toolbox has no runtime API to detach a storage provider, so the
+    // live storageManager keeps writing to the just-removed URL until the wallet
+    // is rebuilt. Without this reload, syncBackupStorage and setPrimaryStorage
+    // would still iterate the removed provider — which can fail mid-flight (e.g.,
+    // a flaky removed backup) and, worse, could leave a user-removed store as a
+    // sync target. A renderer reload triggers the standard auto-init path, which
+    // reads the just-persisted snapshot and rebuilds the wallet cleanly with no
+    // bespoke teardown logic for us to maintain.
+    toast.info('Backup storage removed. Reloading wallet...')
+    setTimeout(() => window.location.reload(), 600)
   }
 
   async syncBackupStorage(progressCallback?: (message: string) => void): Promise<void> {
