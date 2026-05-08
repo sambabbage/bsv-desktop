@@ -78,7 +78,15 @@ export type WalletServiceSnapshot = {
     walletManager?: any
     permissionsManager?: WalletPermissionsManager
     settingsManager?: WalletSettingsManager
+    /** Permission-wrapped wallet used for app-originated requests. Always passes through `permissionsManager`. */
     wallet?: WalletInterface
+    /**
+     * Raw, unwrapped wallet for internal wallet-toolbox plumbing that calls wallet methods
+     * without an originator (e.g. `StorageClient`'s BRC-103 handshake, which calls
+     * `wallet.createHmac` directly). Routing those through the permissions manager throws
+     * "Originator is required for permission checks". Internal-only — never expose to apps.
+     */
+    underlyingWallet?: WalletInterface
     storageManager?: WalletStorageManager
   }
   settings: WalletSettings
@@ -504,6 +512,7 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
         permissionsManager,
         settingsManager: (wallet as any).settingsManager,
         wallet: permissionsManager,
+        underlyingWallet: wallet,
         storageManager,
       }
 
@@ -676,8 +685,8 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
       throw new Error('Local storage is already your primary storage. Cannot add it as a backup.')
     }
 
-    const { wallet, storageManager } = this._managers
-    if (!wallet || !storageManager) throw new Error('Wallet not available')
+    const { underlyingWallet, storageManager } = this._managers
+    if (!underlyingWallet || !storageManager) throw new Error('Wallet not available')
 
     let backupProvider: any
     if (isLocalStorage) {
@@ -689,7 +698,9 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
       await electronStorage.makeAvailable()
       backupProvider = electronStorage
     } else {
-      backupProvider = new StorageClient(wallet, url)
+      // Use the underlying (unwrapped) wallet — StorageClient's BRC-103 handshake calls
+      // wallet.createHmac without an originator, which the permissionsManager wrapper rejects.
+      backupProvider = new StorageClient(underlyingWallet, url)
       await backupProvider.makeAvailable()
     }
 
@@ -731,6 +742,70 @@ export class WalletService extends EventEmittable<WalletServiceEvents> {
     } else {
       progressCallback?.('Backup providers sync automatically on each wallet action')
     }
+  }
+
+  /**
+   * Switch the active (primary) storage to one of the currently-configured backups.
+   *
+   * - `target` is a storage URL (`http://...` / `https://...`) or the `'LOCAL_STORAGE'`
+   *   sentinel for the local Electron-IPC backend.
+   * - Underneath this calls `WalletStorageManager.setActive`, which syncs pending writes
+   *   to the target backup before atomically flipping the active pointer. The wallet
+   *   object is not rebuilt; subsequent reads/writes route through the new active store.
+   * - The old primary is demoted to a backup, and the snapshot fields
+   *   (`useRemoteStorage`, `storageUrl`, `backupStorageUrls`) are updated together so
+   *   the swap survives a reload.
+   */
+  async setPrimaryStorage(target: string, progressCallback?: (message: string) => void): Promise<void> {
+    const { storageManager } = this._managers
+    if (!storageManager) throw new Error('Storage manager not available')
+
+    const isLocal = target === 'LOCAL_STORAGE'
+    const normalizedTarget = isLocal ? target : target.trim().replace(/\/+$/, '')
+    if (!isLocal && !normalizedTarget.startsWith('http://') && !normalizedTarget.startsWith('https://')) {
+      throw new Error('Storage target must be a URL or LOCAL_STORAGE')
+    }
+
+    const stores = storageManager.getStores()
+    if (!stores || stores.length === 0) throw new Error('No storage providers configured')
+
+    const targetStore = stores.find(s =>
+      isLocal ? !s.endpointURL : s.endpointURL === normalizedTarget
+    )
+    if (!targetStore) {
+      throw new Error(`No storage provider matching ${normalizedTarget}. Add it as a backup first.`)
+    }
+    if (targetStore.isActive) {
+      toast.info('Already the primary storage')
+      return
+    }
+
+    // Capture the current primary so we can demote it to a backup after the swap.
+    const oldPrimary = this._useRemoteStorage ? this._selectedStorageUrl : 'LOCAL_STORAGE'
+
+    await storageManager.setActive(targetStore.storageIdentityKey, (s: string) => {
+      console.log('[WalletService setPrimaryStorage]', s)
+      progressCallback?.(s)
+      return s
+    })
+
+    if (isLocal) {
+      this._useRemoteStorage = false
+      this._selectedStorageUrl = ''
+    } else {
+      this._useRemoteStorage = true
+      this._selectedStorageUrl = normalizedTarget
+    }
+    // The new primary is no longer a backup; the old primary becomes one.
+    this._backupStorageUrls = this._backupStorageUrls.filter(u => u !== normalizedTarget)
+    if (oldPrimary && !this._backupStorageUrls.includes(oldPrimary)) {
+      this._backupStorageUrls = [oldPrimary, ...this._backupStorageUrls]
+    }
+
+    const snapshot = this.saveEnhancedSnapshot()
+    localStorage.snap = snapshot
+    this._emitState()
+    toast.success('Primary storage switched!')
   }
 
   async updateMessageBoxUrl(url: string): Promise<void> {

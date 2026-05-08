@@ -161,6 +161,7 @@ export interface WalletContextValue {
   addBackupStorageUrl: (url: string) => Promise<void>;
   removeBackupStorageUrl: (url: string) => Promise<void>;
   syncBackupStorage: (progressCallback?: (message: string) => void) => Promise<void>;
+  setPrimaryStorage: (target: string, progressCallback?: (message: string) => void) => Promise<void>;
   updateMessageBoxUrl: (url: string) => Promise<void>;
   removeMessageBoxUrl: () => Promise<void>;
   initializingBackendServices: boolean;
@@ -221,6 +222,7 @@ export const WalletContext = createContext<WalletContextValue>({
   addBackupStorageUrl: async () => {},
   removeBackupStorageUrl: async () => {},
   syncBackupStorage: async () => {},
+  setPrimaryStorage: async () => {},
   updateMessageBoxUrl: async () => {},
   removeMessageBoxUrl: async () => {},
   initializingBackendServices: false,

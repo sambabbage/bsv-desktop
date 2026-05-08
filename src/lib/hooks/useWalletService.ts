@@ -251,6 +251,10 @@ export function useWalletService() {
   const addBackupStorageUrl = useCallback((url: string) => svc.addBackupStorageUrl(url), [svc])
   const removeBackupStorageUrl = useCallback((url: string) => svc.removeBackupStorageUrl(url), [svc])
   const syncBackupStorage = useCallback((cb?: any) => svc.syncBackupStorage(cb), [svc])
+  const setPrimaryStorage = useCallback(
+    (target: string, cb?: (message: string) => void) => svc.setPrimaryStorage(target, cb),
+    [svc]
+  )
   const updateMessageBoxUrl = useCallback((url: string) => svc.updateMessageBoxUrl(url), [svc])
   const removeMessageBoxUrl = useCallback(() => svc.removeMessageBoxUrl(), [svc])
   const updateSettings = useCallback((s: any) => svc.updateSettings(s), [svc])
@@ -375,6 +379,7 @@ export function useWalletService() {
     addBackupStorageUrl,
     removeBackupStorageUrl,
     syncBackupStorage,
+    setPrimaryStorage,
     updateMessageBoxUrl,
     removeMessageBoxUrl,
     initializingBackendServices: walletState.initializingBackendServices,

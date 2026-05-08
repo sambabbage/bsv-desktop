@@ -78,7 +78,7 @@ const Settings = () => {
   const classes = useStyles()
   const { t } = useTranslation()
   const { currentLanguage, setCurrentLanguage, supportedLanguages } = useLanguage()
-  const { settings, updateSettings, wabUrl, useRemoteStorage, useMessageBox, storageUrl, useWab, messageBoxUrl, backupStorageUrls, addBackupStorageUrl, removeBackupStorageUrl, syncBackupStorage, permissionsConfig, updatePermissionsConfig } = useContext(WalletContext)
+  const { settings, updateSettings, wabUrl, useRemoteStorage, useMessageBox, storageUrl, useWab, messageBoxUrl, backupStorageUrls, addBackupStorageUrl, removeBackupStorageUrl, syncBackupStorage, setPrimaryStorage, permissionsConfig, updatePermissionsConfig } = useContext(WalletContext)
   const { pageLoaded, setManualUpdateInfo } = useContext(UserContext)
   const [settingsLoading, setSettingsLoading] = useState(false)
   const theme = useTheme()
@@ -184,8 +184,9 @@ const Settings = () => {
       await addBackupStorageUrl(local ? 'LOCAL_STORAGE' : newBackupUrl);
       setShowBackupDialog(false);
       setNewBackupUrl('');
-    } catch (e) {
-      // Error already shown by addBackupStorageUrl
+    } catch (e: any) {
+      console.error('[Settings] addBackupStorageUrl failed:', e);
+      toast.error(t('backup_error_add_failed', { message: e?.message || 'unknown error' }));
     } finally {
       setBackupLoading(false);
     }
@@ -197,6 +198,27 @@ const Settings = () => {
       await removeBackupStorageUrl(url);
     } catch (e) {
       // Error already shown by removeBackupStorageUrl
+    } finally {
+      setBackupLoading(false);
+    }
+  }
+
+  const handleMakePrimary = async (target: string) => {
+    try {
+      setBackupLoading(true);
+      setSyncError('');
+      setSyncProgressLogs([]);
+      setSyncComplete(false);
+      setShowSyncProgress(true);
+      const progressCallback = (message: string) => {
+        for (const line of message.split('\n')) {
+          if (line.trim()) setSyncProgressLogs((prev) => [...prev, line]);
+        }
+      };
+      await setPrimaryStorage(target, progressCallback);
+      setSyncComplete(true);
+    } catch (e: any) {
+      setSyncError(e?.message || 'Failed to switch primary storage');
     } finally {
       setBackupLoading(false);
     }
@@ -571,6 +593,15 @@ const Settings = () => {
                     }}>
                       {url === 'LOCAL_STORAGE' ? t('backup_storage_local_electron') : url}
                     </Box>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      onClick={() => handleMakePrimary(url)}
+                      disabled={backupLoading}
+                    >
+                      {t('backup_storage_make_primary_button')}
+                    </Button>
                     <Button
                       variant="outlined"
                       color="error"
