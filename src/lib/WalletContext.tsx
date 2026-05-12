@@ -21,14 +21,12 @@ import React, {
 } from 'react'
 import { useMediaQuery } from '@mui/material'
 import { DEFAULT_SETTINGS, WalletSettings } from '@bsv/wallet-toolbox-client/out/src/WalletSettingsManager'
-import { WalletPermissionsManager, PrivilegedKeyManager } from '@bsv/wallet-toolbox-client'
-import { WalletStorageManager, WalletAuthenticationManager } from '@bsv/wallet-toolbox-client'
-import { WalletInterface } from '@bsv/sdk'
+import { WalletPermissionsManager, PrivilegedKeyManager, WalletStorageManager, WalletAuthenticationManager } from '@bsv/wallet-toolbox-client'
+import { WalletInterface, Utils } from '@bsv/sdk'
 import { PeerPayClient, AdvertisementToken } from '@bsv/message-box-client'
-import { toast } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 
-import { DEFAULT_CHAIN, ADMIN_ORIGINATOR, DEFAULT_USE_WAB } from './config'
+import { ADMIN_ORIGINATOR } from './config'
 import { UserContext } from './UserContext'
 import { useWalletService, getWalletService } from './hooks/useWalletService'
 import { buildPermissionModuleRegistry } from './permissionModules/registry'
@@ -37,7 +35,6 @@ import type { GroupPermissionRequest, CounterpartyPermissionRequest } from './ty
 import type { WalletProfile } from './types/WalletProfile'
 import { RequestInterceptorWallet } from './RequestInterceptorWallet'
 import { updateRecentApp } from './pages/Dashboard/Apps/getApps'
-import { Utils } from '@bsv/sdk'
 
 // -----
 // Permission Configuration Types (preserved for backward compatibility)
@@ -359,7 +356,6 @@ export const WalletContextProvider: React.FC<WalletContextProps> = ({
     }
 
     console.log('[onWalletReady effect] guard passed — registering wallet ref')
-    const wallet = managers.permissionsManager! as unknown as WalletInterface
 
     const updateRecentAppWrapper = async (profileId: string, origin: string): Promise<void> => {
       try {
@@ -369,13 +365,13 @@ export const WalletContextProvider: React.FC<WalletContextProps> = ({
         if (lastProcessed && (now - lastProcessed) < DEBOUNCE_TIME_MS) return
         recentOriginsRef.current.set(cacheKey, now)
         await updateRecentApp(profileId, origin)
-        window.dispatchEvent(new CustomEvent('recentAppsUpdated', { detail: { profileId, origin } }))
+        globalThis.dispatchEvent(new CustomEvent('recentAppsUpdated', { detail: { profileId, origin } }))
       } catch (error) {
         console.debug('Error tracking recent app:', error)
       }
     }
 
-    const interceptorWallet = new RequestInterceptorWallet(wallet, Utils.toBase64(activeProfile.id), updateRecentAppWrapper)
+    const interceptorWallet = new RequestInterceptorWallet(managers.permissionsManager, Utils.toBase64(activeProfile.id), updateRecentAppWrapper)
     // onWalletReady registers IPC listener once, subsequent calls just swap wallet ref
     onWalletReady(interceptorWallet)
 
