@@ -98,7 +98,6 @@ interface ManagerState {
   walletManager?: WalletAuthenticationManager;
   permissionsManager?: WalletPermissionsManager;
   settingsManager?: any;
-  wallet?: WalletInterface;
   storageManager?: WalletStorageManager;
 }
 
@@ -118,6 +117,13 @@ export interface WABConfig {
 export interface WalletContextValue {
   managers: ManagerState;
   updateManagers: (newManagers: ManagerState) => void;
+  /**
+   * Raw, unwrapped `Wallet` from `@bsv/wallet-toolbox`. Standalone — kept
+   * outside `managers` so it is never confused with `permissionsManager`.
+   * Internal/first-party use only (e.g. diagnostic UI, BRC-103 handshake
+   * plumbing). App-originated requests must go through `managers.permissionsManager`.
+   */
+  wallet?: WalletInterface;
   settings: WalletSettings;
   updateSettings: (newSettings: WalletSettings) => Promise<void>;
   network: 'mainnet' | 'testnet';
@@ -346,9 +352,11 @@ export const WalletContextProvider: React.FC<WalletContextProps> = ({
   const DEBOUNCE_TIME_MS = 5000
 
   useEffect(() => {
-    // Use managers.wallet (set by _buildWallet) instead of walletManager.authenticated
-    // SimpleWalletManager (direct-key) doesn't expose an authenticated property
-    const walletReady = !!managers?.wallet
+    // External BRC-100 traffic (port 3321) hits permissionsManager so app-originated
+    // requests pass through permission prompts. The standalone raw `wallet` (separate
+    // from `managers`) is reserved for internal wallet-toolbox plumbing that
+    // intentionally bypasses permissions (e.g. StorageClient BRC-103 handshake).
+    const walletReady = !!managers?.permissionsManager
     console.log('[onWalletReady effect] check:', {
       walletReady,
       profileId: activeProfile?.id ? `[${activeProfile.id.length} bytes]` : null,
@@ -359,7 +367,7 @@ export const WalletContextProvider: React.FC<WalletContextProps> = ({
     }
 
     console.log('[onWalletReady effect] guard passed — registering wallet ref')
-    const wallet = managers.wallet!
+    const wallet = managers.permissionsManager! as unknown as WalletInterface
 
     const updateRecentAppWrapper = async (profileId: string, origin: string): Promise<void> => {
       try {
@@ -380,7 +388,7 @@ export const WalletContextProvider: React.FC<WalletContextProps> = ({
     onWalletReady(interceptorWallet)
 
     // No cleanup — IPC listener is permanent, wallet ref is swapped not re-registered
-  }, [managers?.wallet, activeProfile?.id, onWalletReady])
+  }, [managers?.permissionsManager, activeProfile?.id, onWalletReady])
 
   // ---- Context value ----
   const contextValue = useMemo<WalletContextValue>(() => ({

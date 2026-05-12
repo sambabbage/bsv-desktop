@@ -330,6 +330,9 @@ export function useWalletService() {
     // Managers
     managers: walletState.managers,
     updateManagers,
+    // Raw, unwrapped Wallet — for internal first-party use only. App-originated
+    // requests must go through managers.permissionsManager.
+    wallet: walletState.wallet,
     // Settings
     settings: walletState.settings,
     updateSettings,
