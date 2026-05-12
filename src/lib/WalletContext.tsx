@@ -322,18 +322,10 @@ export const WalletContextProvider: React.FC<WalletContextProps> = ({
     svc.permissionQueue.setPermissionsModuleHelpers(getPermissionModuleById as any, permissionPromptHandlersRef.current)
   }, [enabledPermissionModules, getPermissionModuleById, svc])
 
-  // ---- Permissions config (load from localStorage once) ----
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('permissionsConfig')
-      if (stored) {
-        const merged = { ...DEFAULT_PERMISSIONS_CONFIG, ...JSON.parse(stored) }
-        svc.permissionQueue.permissionsConfig = merged
-      }
-    } catch (e) {
-      console.error('Failed to load permissions config:', e)
-    }
-  }, [svc])
+  // Permissions config is loaded from localStorage inside getWalletService()
+  // before React mounts, so the primed _queueSnapshot already reflects the
+  // saved value. Loading here in a useEffect creates a race against
+  // useSyncExternalStore's subscribe phase and the snapshot update is lost.
 
   // ---- Dark mode for permission prompts ----
   const tokenPromptPaletteMode = useMemo<import('@mui/material').PaletteMode>(() => {

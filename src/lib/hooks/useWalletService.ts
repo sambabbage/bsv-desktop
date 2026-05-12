@@ -13,6 +13,7 @@ import { UserContext } from '../UserContext'
 import { WalletService, WalletServiceSnapshot } from '../services/WalletService'
 import type { QueueSnapshot } from '../services/PermissionQueueManager'
 import type { PeerPaySnapshot } from '../services/PeerPayManager'
+import { DEFAULT_PERMISSIONS_CONFIG } from '../WalletContext'
 
 // Module-level singleton — survives React re-renders and hot reloads
 let _walletServiceInstance: WalletService | null = null
@@ -29,6 +30,19 @@ export function getWalletService(): WalletService {
     _walletServiceInstance = new WalletService()
     // Restore config from snapshot synchronously before first render
     _walletServiceInstance.restoreConfigFromSnapshot()
+    // Restore permissions config from localStorage BEFORE priming snapshot cache.
+    // Doing this in a React useEffect creates a race: the useEffect's emit fires
+    // before useSyncExternalStore's subscribe has registered, so the snapshot
+    // update is lost and React keeps reading the DEFAULT-primed cache.
+    try {
+      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('permissionsConfig') : null
+      if (stored) {
+        const merged = { ...DEFAULT_PERMISSIONS_CONFIG, ...JSON.parse(stored) }
+        _walletServiceInstance.permissionQueue.permissionsConfig = merged
+      }
+    } catch (e) {
+      console.error('[getWalletService] Failed to load permissionsConfig from localStorage:', e)
+    }
     // Prime the caches so getSnapshot functions never return null on first call
     _walletSnapshot = _walletServiceInstance.getSnapshot()
     _queueSnapshot = _walletServiceInstance.permissionQueue.getSnapshot()
@@ -259,8 +273,16 @@ export function useWalletService() {
   const removeMessageBoxUrl = useCallback(() => svc.removeMessageBoxUrl(), [svc])
   const updateSettings = useCallback((s: any) => svc.updateSettings(s), [svc])
   const updatePermissionsConfig = useCallback(async (config: any) => {
-    svc.permissionQueue.permissionsConfig = config
-    localStorage.setItem('permissionsConfig', JSON.stringify(config))
+    // Persist first — if storage fails we don't want to silently update the
+    // in-memory config and have the change disappear on reload.
+    try {
+      localStorage.setItem('permissionsConfig', JSON.stringify(config))
+    } catch (e) {
+      console.error('[useWalletService] failed to persist permissionsConfig:', e)
+      throw e
+    }
+    // Apply to queue + live WalletPermissionsManager and re-emit snapshot.
+    svc.permissionQueue.setPermissionsConfig(config)
   }, [svc])
 
   const anointCurrentHost = useCallback(
